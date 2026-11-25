@@ -1,0 +1,177 @@
+rules_version = '2';
+
+// PetGo — Reglas de Firestore (Nivel A: sin Cloud Functions).
+// Cada bloque de "update" corresponde a UNA escritura concreta de la capa data
+// (ver comentarios con el método del repositorio). Si cambias un repositorio, cambia su regla.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- Helpers ----------
+    function signedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
+    function userDoc() { return get(/databases/$(database)/documents/users/$(uid())).data; }
+    function isClient() { return signedIn() && userDoc().role == 'CLIENT' && userDoc().active == true; }
+    function isWalker() { return signedIn() && userDoc().role == 'WALKER' && userDoc().active == true; }
+    function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+    function onlyChanged(keys) { return changed().hasOnly(keys); }
+    function ticketPath(id) { return /databases/$(database)/documents/tickets/$(id); }
+    function appPath(id) { return /databases/$(database)/documents/applications/$(id); }
+    function reviewPath(id) { return /databases/$(database)/documents/reviews/$(id); }
+    // Las fotos se suben a Cloudinary; solo se aceptan URLs de su CDN (evita enlaces arbitrarios).
+    function isCloudinaryUrl(url) { return url is string && url.matches('https://res[.]cloudinary[.]com/.*'); }
+
+    // ---------- users ----------
+    match /users/{userId} {
+      allow read: if signedIn();
+
+      // FirestoreUserRepository.createUser
+      allow create: if signedIn() && uid() == userId
+        && request.resource.data.role in ['CLIENT', 'WALKER']
+        && request.resource.data.active == true
+        && request.resource.data.email.lower() == request.auth.token.email.lower()
+        && request.resource.data.name is string && request.resource.data.name.size() >= 2
+        && request.resource.data.lastname is string && request.resource.data.lastname.size() >= 2;
+
+      // updatePersonalData / updateWalkerProfile / updatePhotoUrl / updateEmail / deactivate
+      allow update: if signedIn() && uid() == userId
+        && onlyChanged(['name', 'lastname', 'phone', 'experience', 'available', 'photoUrl', 'email', 'active', 'updatedAt'])
+        && (!('email' in changed()) || request.resource.data.email.lower() == request.auth.token.email.lower())
+        && (!('active' in changed()) || request.resource.data.active == false)        // solo desactivar
+        && (!('experience' in changed()) || request.resource.data.experience.size() <= 1000)
+        && (!('photoUrl' in changed()) || isCloudinaryUrl(request.resource.data.photoUrl));
+
+      allow delete: if false;
+    }
+
+    // ---------- pets ----------
+    match /pets/{petId} {
+      allow read: if signedIn();
+
+      // FirestorePetRepository.createPet (mismas reglas que PetValidator)
+      allow create: if isClient()
+        && request.resource.data.ownerId == uid()
+        && request.resource.data.active == true
+        && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100
+        && request.resource.data.age >= 0 && request.resource.data.age <= 30
+        && request.resource.data.weight > 1.4 && request.resource.data.weight <= 150
+        && request.resource.data.behavior.size() > 0 && request.resource.data.behavior.size() <= 500
+        && request.resource.data.gender in ['Macho', 'Hembra']
+        && isCloudinaryUrl(request.resource.data.photoUrl);
+
+      // FirestorePetRepository.deactivate
+      allow update: if signedIn() && resource.data.ownerId == uid()
+        && onlyChanged(['active']) && request.resource.data.active == false;
+
+      allow delete: if false;
+    }
+
+    // ---------- tickets ----------
+    match /tickets/{ticketId} {
+      allow read: if signedIn();
+
+      // FirestoreTicketRepository.createTicket
+      allow create: if isClient()
+        && request.resource.data.clientId == uid()
+        && request.resource.data.status == 'PENDING'
+        && request.resource.data.deleted == false
+        && request.resource.data.assignedWalkerId == null
+        && request.resource.data.petIds.size() > 0
+        && request.resource.data.durationMinutes >= 30 && request.resource.data.durationMinutes <= 180;
+
+      function isOwner() { return signedIn() && resource.data.clientId == uid(); }
+      function from(s) { return resource.data.status == s; }
+      function to(s) { return request.resource.data.status == s; }
+
+      // Aceptación de una postulación (FirestoreApplicationRepository.accept):
+      // la postulación del paseador asignado debe quedar ACCEPTED en la misma transacción.
+      function isAssignment() {
+        return from('PENDING') && to('ASSIGNED') && resource.data.deleted == false
+          && onlyChanged(['status', 'assignedWalkerId', 'agreedPrice', 'updatedAt'])
+          && getAfter(appPath(ticketId + '_' + request.resource.data.assignedWalkerId)).data.status == 'ACCEPTED'
+          && request.resource.data.agreedPrice == getAfter(appPath(ticketId + '_' + request.resource.data.assignedWalkerId)).data.offerPrice;
+      }
+
+      allow update: if
+        // Cliente: reprogramar (updateSchedule) — solo PENDING
+        (isOwner() && from('PENDING') && onlyChanged(['date', 'hour', 'startAt', 'durationMinutes', 'updatedAt'])
+          && request.resource.data.durationMinutes >= 30 && request.resource.data.durationMinutes <= 180)
+        // Cliente: borrado lógico (softDelete) — solo PENDING
+        || (isOwner() && from('PENDING') && onlyChanged(['deleted', 'updatedAt']) && request.resource.data.deleted == true)
+        // Cliente: start / finish / cancel (changeStatus)
+        || (isOwner() && onlyChanged(['status', 'updatedAt']) && (
+              (from('ASSIGNED') && (to('IN_PROGRESS') || to('CANCELED')))
+           || (from('IN_PROGRESS') && (to('COMPLETED') || to('CANCELED')))))
+        // Cliente: calificar (FirestoreReviewRepository.rate) — la reseña se crea en la misma transacción
+        || (isOwner() && onlyChanged(['status', 'updatedAt']) && from('COMPLETED') && to('REVIEWED')
+              && existsAfter(reviewPath(ticketId)))
+        // Cliente acepta una postulación PENDING
+        || (isOwner() && isAssignment())
+        // Paseador acepta una contraoferta sobre su propia postulación
+        || (isWalker() && request.resource.data.assignedWalkerId == uid() && isAssignment()
+              && get(appPath(ticketId + '_' + uid())).data.status == 'COUNTERED');
+
+      allow delete: if false;
+    }
+
+    // ---------- applications ----------
+    match /applications/{appId} {
+      // resource == null permite el tx.get() de una postulación inexistente al crearla.
+      allow read: if signedIn() && (resource == null || resource.data.walkerId == uid() || resource.data.clientId == uid());
+
+      // FirestoreApplicationRepository.create
+      allow create: if isWalker()
+        && request.resource.data.walkerId == uid()
+        && appId == request.resource.data.ticketId + '_' + uid()
+        && request.resource.data.status == 'PENDING'
+        && request.resource.data.offerPrice > 0
+        && request.resource.data.offerPrice == request.resource.data.originalPrice
+        && get(ticketPath(request.resource.data.ticketId)).data.status == 'PENDING'
+        && get(ticketPath(request.resource.data.ticketId)).data.deleted == false
+        && request.resource.data.clientId == get(ticketPath(request.resource.data.ticketId)).data.clientId;
+
+      function isClientOwner() { return signedIn() && resource.data.clientId == uid(); }
+      function isWalkerOwner() { return signedIn() && resource.data.walkerId == uid(); }
+      function from(s) { return resource.data.status == s; }
+      function to(s) { return request.resource.data.status == s; }
+      function ticketAssignedToMe() {
+        return getAfter(ticketPath(resource.data.ticketId)).data.assignedWalkerId == resource.data.walkerId
+          && getAfter(ticketPath(resource.data.ticketId)).data.status == 'ASSIGNED';
+      }
+
+      allow update: if
+        // Cliente: contraoferta (counterOffer)
+        (isClientOwner() && from('PENDING') && to('COUNTERED') && onlyChanged(['offerPrice', 'status', 'updatedAt'])
+          && request.resource.data.offerPrice > 0)
+        // Cliente: rechazar (reject / rejectSiblings / hermanas en accept)
+        || (isClientOwner() && (from('PENDING') || from('COUNTERED')) && to('REJECTED') && onlyChanged(['status', 'updatedAt']))
+        // Cliente: aceptar PENDING (accept) — el ticket debe quedar asignado a este paseador
+        || (isClientOwner() && from('PENDING') && to('ACCEPTED') && onlyChanged(['status', 'updatedAt']) && ticketAssignedToMe())
+        // Paseador: aceptar o rechazar una contraoferta
+        || (isWalkerOwner() && from('COUNTERED') && to('ACCEPTED') && onlyChanged(['status', 'updatedAt']) && ticketAssignedToMe())
+        || (isWalkerOwner() && from('COUNTERED') && to('REJECTED') && onlyChanged(['status', 'updatedAt']));
+
+      // FirestoreTicketRepository.softDelete: el ticket queda deleted=true en el mismo batch
+      allow delete: if isClientOwner() && getAfter(ticketPath(resource.data.ticketId)).data.deleted == true;
+    }
+
+    // ---------- reviews ----------
+    match /reviews/{ticketId} {
+      allow read: if signedIn();
+
+      // FirestoreReviewRepository.rate
+      allow create: if isClient()
+        && request.resource.data.clientId == uid()
+        && request.resource.data.ticketId == ticketId
+        && get(ticketPath(ticketId)).data.clientId == uid()
+        && get(ticketPath(ticketId)).data.status == 'COMPLETED'
+        && getAfter(ticketPath(ticketId)).data.status == 'REVIEWED'
+        && request.resource.data.walkerId == get(ticketPath(ticketId)).data.assignedWalkerId
+        && request.resource.data.stars >= 1 && request.resource.data.stars <= 5
+        && request.resource.data.punctuality >= 1 && request.resource.data.punctuality <= 5
+        && request.resource.data.treatment >= 1 && request.resource.data.treatment <= 5
+        && request.resource.data.comment.size() <= 250;
+
+      allow update, delete: if false;
+    }
+  }
+}
