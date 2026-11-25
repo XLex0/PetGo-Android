@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PetGo</string>
+    <string name="tagline">¡Pasea a tu mascota con confianza!</string>
+    <string name="tagline_sub">Conecta con paseadores certificados que cuidan de tu mejor amigo.</string>
+    <string name="footer">© 2025 PetGo – Paseos con Amor</string>
+
+    <!-- Acciones comunes -->
+    <string name="action_login">Iniciar sesión</string>
+    <string name="action_register">Registrarse</string>
+    <string name="action_logout">Cerrar sesión</string>
+    <string name="action_cancel">Cancelar</string>
+    <string name="action_accept">Aceptar</string>
+    <string name="action_reject">Rechazar</string>
+    <string name="action_save">Guardar</string>
+    <string name="loading">Cargando…</string>
+    <string name="confirm_logout_title">¿Cerrar sesión?</string>
+    <string name="confirm_logout_message">Tendrás que volver a ingresar tus credenciales.</string>
+
+    <!-- Estados de ticket -->
+    <string name="ticket_status_pending">Pendiente</string>
+    <string name="ticket_status_assigned">Asignado</string>
+    <string name="ticket_status_in_progress">En progreso</string>
+    <string name="ticket_status_completed">Completado</string>
+    <string name="ticket_status_canceled">Cancelado</string>
+    <string name="ticket_status_reviewed">Calificado</string>
+
+    <!-- Estados de postulación -->
+    <string name="application_status_pending">Pendiente</string>
+    <string name="application_status_accepted">Aceptada</string>
+    <string name="application_status_rejected">Rechazada</string>
+    <string name="application_status_countered">¡Contraoferta!</string>
+
+    <!-- Placeholder mientras se construye la capa UI -->
+    <string name="placeholder_signed_in">Sesión iniciada como %1$s (%2$s)</string>
+    <string name="placeholder_signed_out">Capa UI en construcción</string>
+</resources>

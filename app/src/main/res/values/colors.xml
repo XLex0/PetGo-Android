@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="petgo_primary">#FF28A745</color>
+    <color name="petgo_secondary">#FF20C997</color>
+    <color name="petgo_dark">#FF1E7E34</color>
+    <color name="petgo_light">#FFF8FFF9</color>
+</resources>
