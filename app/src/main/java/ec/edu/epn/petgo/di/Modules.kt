@@ -11,10 +11,18 @@ import ec.edu.epn.petgo.BuildConfig
 import ec.edu.epn.petgo.data.repository.FirebaseAuthRepository
 import ec.edu.epn.petgo.data.repository.CloudinaryImageRepository
 import ec.edu.epn.petgo.data.repository.FirebaseSessionRepository
+import ec.edu.epn.petgo.data.repository.FirestoreApplicationRepository
+import ec.edu.epn.petgo.data.repository.FirestorePetRepository
+import ec.edu.epn.petgo.data.repository.FirestoreReviewRepository
+import ec.edu.epn.petgo.data.repository.FirestoreTicketRepository
 import ec.edu.epn.petgo.data.repository.FirestoreUserRepository
+import ec.edu.epn.petgo.domain.repository.ApplicationRepository
 import ec.edu.epn.petgo.domain.repository.AuthRepository
 import ec.edu.epn.petgo.domain.repository.ImageRepository
+import ec.edu.epn.petgo.domain.repository.PetRepository
+import ec.edu.epn.petgo.domain.repository.ReviewRepository
 import ec.edu.epn.petgo.domain.repository.SessionRepository
+import ec.edu.epn.petgo.domain.repository.TicketRepository
 import ec.edu.epn.petgo.domain.repository.UserRepository
 import ec.edu.epn.petgo.data.image.CloudinaryConfig
 import kotlinx.coroutines.CoroutineDispatcher
@@ -22,6 +30,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import okhttp3.OkHttpClient
+import java.time.Clock
 import java.util.concurrent.TimeUnit
 import javax.inject.Qualifier
 import javax.inject.Singleton
@@ -71,6 +80,10 @@ object CoroutinesModule {
 
     @Provides @Singleton @ApplicationScope
     fun provideApplicationScope(): CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** Inyectable para poder fijar "hoy" en los tests de validación de fechas. */
+    @Provides @Singleton
+    fun provideClock(): Clock = Clock.systemDefaultZone()
 }
 
 @Module
@@ -80,4 +93,8 @@ abstract class RepositoryModule {
     @Binds abstract fun bindSession(impl: FirebaseSessionRepository): SessionRepository
     @Binds abstract fun bindUsers(impl: FirestoreUserRepository): UserRepository
     @Binds abstract fun bindImages(impl: CloudinaryImageRepository): ImageRepository
+    @Binds abstract fun bindPets(impl: FirestorePetRepository): PetRepository
+    @Binds abstract fun bindTickets(impl: FirestoreTicketRepository): TicketRepository
+    @Binds abstract fun bindApplications(impl: FirestoreApplicationRepository): ApplicationRepository
+    @Binds abstract fun bindReviews(impl: FirestoreReviewRepository): ReviewRepository
 }

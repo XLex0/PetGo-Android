@@ -20,6 +20,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
@@ -103,3 +105,13 @@ fun CollectMessages(messages: Flow<UiMessage>, snackbar: SnackbarHostState = Loc
 fun SessionRepository.currentUserFlow(vm: ViewModel): StateFlow<User?> =
     session.map { (it as? SessionState.SignedIn)?.user }
         .stateIn(vm.viewModelScope, SharingStarted.WhileSubscribed(5_000), (session.value as? SessionState.SignedIn)?.user)
+
+/** uid del usuario autenticado; emite solo cuando cambia. Útil para flatMapLatest. */
+fun SessionRepository.userIdFlow(): Flow<String> =
+    session.filterIsInstance<SessionState.SignedIn>().map { it.user.id }.distinctUntilChanged()
+
+/** Estado genérico de una lista cargada en vivo desde Firestore. */
+sealed interface ListState<out T> {
+    data object Loading : ListState<Nothing>
+    data class Ready<T>(val items: List<T>) : ListState<T>
+}
