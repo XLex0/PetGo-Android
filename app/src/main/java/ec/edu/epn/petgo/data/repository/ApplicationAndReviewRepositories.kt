@@ -11,12 +11,15 @@ import ec.edu.epn.petgo.data.remote.abort
 import ec.edu.epn.petgo.data.remote.businessAbort
 import ec.edu.epn.petgo.data.remote.dto.ApplicationDto
 import ec.edu.epn.petgo.data.remote.dto.Collections
+import ec.edu.epn.petgo.data.remote.dto.ReviewDto
 import ec.edu.epn.petgo.data.remote.dto.TicketDto
 import ec.edu.epn.petgo.data.remote.firebaseCall
 import ec.edu.epn.petgo.domain.model.Application
 import ec.edu.epn.petgo.domain.model.ApplicationStatus
+import ec.edu.epn.petgo.domain.model.Review
 import ec.edu.epn.petgo.domain.model.TicketStatus
 import ec.edu.epn.petgo.domain.repository.ApplicationRepository
+import ec.edu.epn.petgo.domain.repository.ReviewRepository
 import ec.edu.epn.petgo.domain.usecase.application.ApplyToTicketUseCase
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -136,4 +139,35 @@ class FirestoreApplicationRepository @Inject constructor(
         }.await()
         Unit
     }
+}
+
+@Singleton
+class FirestoreReviewRepository @Inject constructor(
+    private val db: FirebaseFirestore,
+) : ReviewRepository {
+
+    private val reviews get() = db.collection(Collections.REVIEWS)
+    private val tickets get() = db.collection(Collections.TICKETS)
+
+    /** ReviewService.rateTicket: crea la reseña y marca el ticket REVIEWED de forma atómica. */
+    override suspend fun rate(review: Review): AppResult<Unit> = firebaseCall {
+        val ticketRef = tickets.document(review.ticketId)
+        val reviewRef = reviews.document(review.ticketId)
+        db.runTransaction { tx ->
+            val ticket = tx.get(ticketRef).toObject(TicketDto::class.java) ?: abort(AppError.NotFound)
+            val existing = tx.get(reviewRef)
+            if (ticket.clientId != review.clientId) abort(AppError.PermissionDenied)
+            if (existing.exists() || ticket.status == TicketStatus.REVIEWED.name) businessAbort("Este paseo ya fue calificado.")
+            if (ticket.status != TicketStatus.COMPLETED.name) businessAbort("Solo puedes calificar paseos completados.")
+            tx.set(reviewRef, review.toDto())
+            tx.update(ticketRef, mapOf("status" to TicketStatus.REVIEWED.name, "updatedAt" to FieldValue.serverTimestamp()))
+            null
+        }.await()
+        Unit
+    }
+
+    /** ReviewDAO.findByWalkerId (ya no necesita JOIN con applications: walkerId va en la reseña). */
+    override fun observeByWalker(walkerId: String): Flow<List<Review>> =
+        reviews.whereEqualTo("walkerId", walkerId).snapshots()
+            .map { snap -> snap.toObjects(ReviewDto::class.java).map { it.toDomain() } }
 }
